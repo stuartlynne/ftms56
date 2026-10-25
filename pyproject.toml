@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ftms56"
+version = "0.1.0"
+description = "Single-loop Direct Connect bridge with experimental Zwift virtual shifting"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[project.optional-dependencies]
+ble = ["bleak>=3.0.2,<4"]
+
+[project.scripts]
+ftms56 = "ftms56.cli:main"
+
+[tool.setuptools.package-data]
+ftms56 = ["status.html"]
+
+[tool.setuptools.packages.find]
+include = ["ftms56*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

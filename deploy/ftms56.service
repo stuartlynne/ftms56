@@ -1,0 +1,23 @@
+# Legacy system-wide TCP-only template, retained for README-plan.md.
+# New installations should use install.py --systemd (ftms56.service.in).
+[Unit]
+Description=KICKR Direct Connect bridge
+Wants=network-online.target avahi-daemon.service
+After=network-online.target avahi-daemon.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/ftms56.env
+ExecStart=/opt/ftms56/.venv/bin/python -m ftms56 run --trainer ${FTMS56_TRAINER} --physical-ratio ${FTMS56_PHYSICAL_RATIO} --trainer-mass-kg ${FTMS56_TRAINER_MASS_KG}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

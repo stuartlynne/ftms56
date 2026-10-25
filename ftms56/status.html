@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ftms56 · Trainer bridge</title>
+<style>
+ :root{color-scheme:dark;font:16px system-ui;background:#101720;color:#edf1f6}
+ body{max-width:1050px;margin:40px auto;padding:0 24px}h1{margin-bottom:6px}
+ .muted{color:#a9b7c8} .badge{padding:6px 12px;border-radius:20px;background:#29384b}
+ .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;margin:24px 0}
+ article{border:1px solid #344155;border-radius:12px;padding:18px;background:#17212f}
+ h2{font-size:14px;font-weight:500;color:#a9b7c8;margin:0 0 10px}
+ .value{font-size:28px;font-variant-numeric:tabular-nums}table{width:100%;border-collapse:collapse}
+ td,th{text-align:left;padding:8px;border-bottom:1px solid #344155;font-size:14px}
+ pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}.warning{color:#ffcc75}
+ .grade-label{font-size:13px;color:#a9b7c8;margin-top:12px}.grade-value{font-size:25px;font-variant-numeric:tabular-nums}
+ input[type=range]{width:100%;accent-color:#92caff;margin:16px 0;cursor:pointer}
+ .slider-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}
+ a{color:#92caff}#connection{float:right}p{line-height:1.5}
+</style>
+<body>
+<span class="badge" id="connection">Connecting…</span>
+<h1>ftms56</h1><div class="muted">KICKR Direct Connect bridge</div>
+<p class="warning">Virtual shifting is experimental. Set the actual chainring/sprocket ratio before riding.</p>
+<div class="grid">
+ <article><h2>Bridge → Wahoo KICKR5</h2><div class="value" id="wahoo-link">Checking…</div><p id="wahoo-address" class="muted">—</p></article>
+ <article><h2>Zwift → KICKR5 emulation</h2><div class="value" id="kickr5-link">Checking…</div><p id="kickr5-detail" class="muted">—</p></article>
+ <article><h2>Zwift → KICKR6 emulation</h2><div class="value" id="kickr6-link">Checking…</div><p id="kickr6-detail" class="muted">—</p></article>
+</div>
+<article>
+ <div class="slider-heading"><label for="difficulty-slider">Trainer Difficulty</label><output id="difficulty-value" for="difficulty-slider">50%</output></div>
+ <input id="difficulty-slider" type="range" min="0" max="100" step="1" value="50" disabled>
+ <div class="muted" id="difficulty-help">Keep Trainer Difficulty in Zwift at 50%. This slider adjusts slope feel; power is always reported as measured.</div>
+ <p class="muted" id="difficulty-state" role="status">Loading current setting…</p>
+</article>
+<div class="grid">
+ <article><h2>Active profile / mode</h2><div class="value" id="profile">—</div><p id="mode" class="muted">—</p></article>
+ <article><h2>Virtual gear</h2><div class="value" id="gear">—</div>
+  <p id="gear-range" class="muted">Detecting gear range…</p>
+  <p id="gear-style" class="muted">—</p><p id="ratio" class="muted">—</p></article>
+ <article id="circumference-card" hidden><h2>Wahoo circumference test</h2>
+  <div class="grade-label">Requested</div><div class="grade-value" id="circumference-requested">—</div>
+  <div class="grade-label">Trainer confirmed</div><div class="grade-value" id="circumference-written">—</div>
+  <p id="circumference-baseline" class="muted">—</p><p id="ratio-check" class="muted">—</p>
+  <p class="muted">Confirmation requires a TCP reply and matching Wahoo result; braking is not measured. On exit the configured test baseline is restored; the original setting cannot be read.</p></article>
+ <article><h2>Measured power</h2><div class="value" id="power">—</div><p id="cadence" class="muted">—</p></article>
+ <article><h2>Simulation grades</h2>
+  <div class="grade-label">Zwift simulation input</div><div class="grade-value" id="input-grade">—</div>
+  <div class="grade-label">After GUI difficulty</div><div class="grade-value" id="effective-grade">—</div>
+  <div class="grade-label" id="trainer-grade-label">KICKR5 equivalent grade</div><div class="grade-value" id="trainer-grade">—</div>
+  <p id="grade-age" class="muted">Waiting for a trainer command</p>
+  <p id="resistance" class="muted">—</p></article>
+</div>
+<p class="muted">Zwift simulation input already includes Zwift’s difficulty adjustment and can differ from its displayed road grade.
+ After GUI difficulty shows the adjusted slope. The KICKR5 grade is the last SIM command accepted by the trainer.
+ In circumference mode, gearing is applied through circumference changes. In grade mode, gearing is converted to an equivalent grade.</p>
+<p class="muted" id="details">Waiting for status…</p>
+<p class="warning" id="notice"></p>
+<article><h2>Data transferred</h2><table><thead><tr><th>Endpoint</th><th>Received</th><th>Sent</th></tr></thead>
+<tbody id="traffic"></tbody></table></article>
+<article style="margin-top:16px"><h2>Recent events</h2><pre id="events">—</pre></article>
+<p><a href="/api/status">JSON status</a> · <a href="/healthz">Trainer health</a></p>
+<script>
+ const set=(id,value)=>document.getElementById(id).textContent=value;
+ const n=(x,d=0)=>x==null?'—':Number(x).toFixed(d);
+ const slider=document.getElementById('difficulty-slider');
+ let editingDifficulty=false, savingDifficulty=false, haveStatus=false;
+ slider.addEventListener('input',()=>{editingDifficulty=true;set('difficulty-value',slider.value+'%')});
+ slider.addEventListener('change',async()=>{
+  savingDifficulty=true;slider.disabled=true;
+  set('difficulty-state','Applying…');
+  try{
+   const response=await fetch('/api/difficulty',{method:'POST',headers:{'Content-Type':'application/json'},
+     body:JSON.stringify({percent:Number(slider.value)}),signal:AbortSignal.timeout(4000)});
+   const result=await response.json();if(!response.ok)throw new Error(result.error||'Update failed');
+   slider.value=result.percent;set('difficulty-value',n(result.percent)+'%');
+   set('difficulty-state','Applied. Live for the KICKR6 profile; resets to the configured value when the service restarts.');
+  }catch(e){set('difficulty-state','Could not apply setting: '+String(e))}
+  finally{editingDifficulty=false;savingDifficulty=false;slider.disabled=!haveStatus}
+ });
+ let busy=false;
+ async function update(){
+  if(busy)return;busy=true;
+  try{
+   const response=await fetch('/api/status',{cache:'no-store',signal:AbortSignal.timeout(4000)});
+   if(!response.ok)throw new Error('HTTP '+response.status);
+   const s=await response.json(), t=s.telemetry;
+   haveStatus=true;
+   if(!editingDifficulty&&!savingDifficulty){slider.value=s.difficulty.percent;set('difficulty-value',n(s.difficulty.percent)+'%')}
+   if(!savingDifficulty)slider.disabled=false;
+   set('difficulty-help','Keep Trainer Difficulty in Zwift at '+n(s.difficulty.zwift_baseline_percent)+
+       '%. This slider adjusts slope feel; power is always reported as measured.');
+   if(document.getElementById('difficulty-state').textContent==='Loading current setting…')
+    set('difficulty-state','Live for the KICKR6 profile. KICKR5 pass-through and ERG targets are unchanged.');
+   set('wahoo-link',s.links.wahoo.state);set('wahoo-address',s.links.wahoo.address);
+   for(const profile of ['kickr5','kickr6']){
+    const link=s.links[profile];
+    set(profile+'-link',link.connected?'Connected':'Disconnected');
+    set(profile+'-detail',link.name+' · Port '+link.port+' · '+link.clients+' connection(s)'+
+        (link.advertised?'':' · Not advertised')+
+        (s.active_profile&&s.active_profile!==profile?' · Other profile in use':''));
+   }
+   set('connection',s.ready?'Trainer ready':'Trainer unavailable');
+   set('profile',s.active_profile||'Idle');set('mode',s.mode+' · '+s.clients+' connection(s) · '+s.shifting.method+' shifting');
+   const g=s.gearing;
+   set('gear',(g.confidence==='approximate'?'≈ ':'')+(g.gear_label??'—'));
+   set('gear-range',g.preset?g.preset+' · '+g.confidence:'Detecting gear range…');
+   set('gear-style',g.style?g.style+' · '+g.style_confidence+(g.teeth?' · '+g.teeth:''):'Waiting for Zwift ratio');
+   set('ratio','Virtual ratio '+n(s.ratio,4)+' · physical '+n(s.physical_ratio,4));
+   const c=s.shifting, circumferenceMode=c.method==='circumference';
+   document.getElementById('circumference-card').hidden=!circumferenceMode;
+   const mm=x=>x==null?'—':n(x,1)+' mm';
+   set('circumference-requested',mm(c.requested_circumference_mm));
+   set('circumference-written',mm(c.written_circumference_mm));
+   set('circumference-baseline','Test baseline '+mm(c.baseline_circumference_mm)+' at ratio '+n(c.baseline_ratio,2));
+   set('ratio-check',g.ratio_matches==null?'Waiting for Zwift ratio':g.ratio_matches?
+       (g.candidates.length>1?'Possible ranges: '+g.candidates.join(', '):'Ratio matches '+g.preset+' table'):
+       'Unknown ratio; range and gear are approximate. Load still uses the received ratio.');
+   set('trainer-grade-label',circumferenceMode?'KICKR5 simulation grade':'KICKR5 equivalent grade');
+   set('power',n(t.power)+' W');set('cadence',n(t.cadence)+' rpm · '+n((t.speed_mps??0)*3.6,1)+' km/h');
+   const percent=x=>x==null?'—':n(x,2)+'%';
+   set('input-grade',percent(s.zwift_simulation_grade));
+   set('effective-grade',percent(s.effective_simulation_grade));
+   set('trainer-grade',s.mode==='SIM'?percent(s.trainer_grade):'Inactive in '+s.mode);
+   set('grade-age',s.trainer_grade_age_s==null?'Waiting for an accepted SIM command':
+       'Trainer accepted '+n(s.trainer_grade_age_s,1)+' s ago · input age '+n(s.zwift_grade_age_s,1)+' s');
+   set('resistance','Reported resistance '+n(t.resistance,1)+' · '+(s.control_ready?'Control acquired':'Control idle'));
+   set('details',s.trainer+' · Telemetry age '+n(t.updated_age_s,1)+' s · Uptime '+s.uptime_s+' s · Queue '+s.queue_depth);
+   set('notice',c.error|| (s.translation?.clamped?'Translated grade has reached the configured limit.':
+       t.updated_age_s>5?'Telemetry is stale.':!s.shifting_available?'Virtual shifting unavailable until FTMS simulation support is confirmed.':''));
+   const rows=[['Trainer',s.counters.trainer_rx_bytes,s.counters.trainer_tx_bytes],['Zwift',s.counters.client_rx_bytes,s.counters.client_tx_bytes]];
+   const body=document.getElementById('traffic');body.replaceChildren();
+   for(const row of rows){const tr=document.createElement('tr');for(const x of row){const td=document.createElement('td');td.textContent=x;tr.append(td)}body.append(tr)}
+   set('events',s.events.slice().reverse().map(e=>e.time+' '+e.level+' '+e.message).join('\n')||'No events');
+  }catch(e){set('connection','Status connection lost');set('notice',String(e));
+   haveStatus=false;slider.disabled=true;
+   for(const id of ['wahoo-link','kickr5-link','kickr6-link'])set(id,'Status unavailable');}
+  finally{busy=false}
+ }
+ update();setInterval(update,1000);
+</script>
+</body></html>

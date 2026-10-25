@@ -1,0 +1,10 @@
+{
+  "trainer_host": "192.0.2.10",
+  "physical_ratio": 3.125,
+  "shift_mode": "circumference",
+  "shift_baseline_ratio": 3.125,
+  "shift_baseline_circumference": 2.0,
+  "zwift_difficulty": 50,
+  "trainer_difficulty": 50,
+  "hide_kickr5": true
+}
